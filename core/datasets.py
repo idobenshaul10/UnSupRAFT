@@ -64,6 +64,11 @@ class FlowDataset(data.Dataset):
         img1 = np.array(img1).astype(np.uint8)
         img2 = np.array(img2).astype(np.uint8)
 
+        # import cv2
+        # cv2.imshow('image1', img1)
+        # cv2.imshow('image2', img2)
+        # cv2.waitKey(-1)        
+
         # grayscale images
         if len(img1.shape) == 2:
             img1 = np.tile(img1[...,None], (1, 1, 3))
@@ -80,7 +85,7 @@ class FlowDataset(data.Dataset):
 
         img1 = torch.from_numpy(img1).permute(2, 0, 1).float()
         img2 = torch.from_numpy(img2).permute(2, 0, 1).float()
-        flow = torch.from_numpy(flow).permute(2, 0, 1).float()
+        flow = torch.from_numpy(flow).permute(2, 0, 1).float()        
 
         if valid is not None:
             valid = torch.from_numpy(valid)
