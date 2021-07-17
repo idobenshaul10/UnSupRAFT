@@ -56,7 +56,7 @@ def sequence_loss(flow_preds, warped_images, img1, \
 
 	# exlude invalid pixels and extremely large diplacements
 	mag = torch.sum(flow_gt**2, dim=1).sqrt()
-	valid = (valid >= 0.5) & (mag < max_flow)
+	# valid = (valid >= 0.5) & (mag < max_flow)
 
 	for i in range(n_predictions):
 		i_weight = gamma**(n_predictions - i - 1)
@@ -64,10 +64,10 @@ def sequence_loss(flow_preds, warped_images, img1, \
 		i_loss = unsup_loss(flow_preds[i], warped_images[i], img1)
 		# i_loss = (flow_preds[i] - flow_gt).abs()
 
-		flow_loss += i_weight * (valid[:, None] * i_loss).mean()
+		flow_loss += i_weight * (i_loss).mean()
 
 	epe = torch.sum((flow_preds[-1] - flow_gt)**2, dim=1).sqrt()
-	epe = epe.view(-1)[valid.view(-1)]
+	epe = epe.view(-1)#[valid.view(-1)]
 
 	metrics = {
 		'epe': epe.mean().item(),
@@ -169,7 +169,7 @@ def train(args):
 
 		for i_batch, data_blob in tqdm(enumerate(train_loader), total=len(train_loader)):
 			optimizer.zero_grad()
-			image1, image2, flow_gt, valid = [x.cuda() for x in data_blob]            
+			image1, image2, flow_gt, valid = [x.cuda() for x in data_blob]
 			
 
 			if args.add_noise:

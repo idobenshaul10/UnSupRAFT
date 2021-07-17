@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+# adapted from "Back to Basics: Unsupervised Learning of Optical Flow via Brightness"
+# Constancy and Motion Smoothness
 
 def charbonnier(x, alpha=0.25, epsilon=1.e-9):
 	return torch.pow(torch.pow(x, 2) + epsilon**2, alpha)
