@@ -2,6 +2,13 @@ from __future__ import print_function, division
 import sys
 sys.path.append('/home/ido/projects/RAFT/core')
 
+'''
+
+python -u train.py --name raft-chairs --stage chairs --validation chairs 
+--gpus 0 --num_steps 100000 --batch_size 8 --lr 0.0004 --image_size 368 496 --wdecay 0.0001
+
+'''
+
 import argparse
 import os
 import cv2
@@ -43,12 +50,10 @@ except:
 # exclude extremly large displacements
 MAX_FLOW = 400
 SUM_FREQ = 100
-VAL_FREQ = 5000
-
-
+VAL_FREQ = 200
 
 def sequence_loss(flow_preds, warped_images, img1, \
-	flow_gt, valid, gamma=0.8, max_flow=MAX_FLOW):
+	flow_gt, valid, total_steps, gamma=0.8, max_flow=MAX_FLOW):
 	""" Loss function defined over sequence of flow predictions """
 
 	n_predictions = len(flow_preds)    
@@ -60,20 +65,29 @@ def sequence_loss(flow_preds, warped_images, img1, \
 
 	for i in range(n_predictions):
 		i_weight = gamma**(n_predictions - i - 1)
+		
+		if total_steps < 0:
+			i_loss = (flow_preds[i] - flow_gt).abs()
+		else:
+			i_loss = unsup_loss(flow_preds[i], warped_images[i], img1)
+			# i_loss = unsup_loss(flow_gt, warped_images[i], img1)
 
-		i_loss = unsup_loss(flow_preds[i], warped_images[i], img1)
-		# i_loss = (flow_preds[i] - flow_gt).abs()
-
-		flow_loss += i_weight * (i_loss).mean()
+		# i_loss = unsup_loss(flow_preds[i], warped_images[i], img1)
+		
+		try:
+			flow_loss += i_weight * (i_loss).mean()
+		except:
+			import pdb; pdb.set_trace()
 
 	epe = torch.sum((flow_preds[-1] - flow_gt)**2, dim=1).sqrt()
 	epe = epe.view(-1)#[valid.view(-1)]
 
 	metrics = {
 		'epe': epe.mean().item(),
+		'loss': flow_loss.item(),
 		'1px': (epe < 1).float().mean().item(),
 		'3px': (epe < 3).float().mean().item(),
-		'5px': (epe < 5).float().mean().item(),
+		'5px': (epe < 5).float().mean().item()
 	}
 
 	return flow_loss, metrics
@@ -161,7 +175,7 @@ def train(args):
 	scaler = GradScaler(enabled=args.mixed_precision)
 	logger = Logger(model, scheduler)
 
-	VAL_FREQ = 5000
+	VAL_FREQ = 500
 	add_noise = True
 
 	should_keep_training = True
@@ -169,18 +183,19 @@ def train(args):
 
 		for i_batch, data_blob in tqdm(enumerate(train_loader), total=len(train_loader)):
 			optimizer.zero_grad()
-			image1, image2, flow_gt, valid = [x.cuda() for x in data_blob]
-			
+			image1, image2, flow_gt, valid, frame1, frame2 = [x.cuda() for x in data_blob]			
 
 			if args.add_noise:
 				stdv = np.random.uniform(0.0, 5.0)
 				image1 = (image1 + stdv * torch.randn(*image1.shape).cuda()).clamp(0.0, 255.0)
 				image2 = (image2 + stdv * torch.randn(*image2.shape).cuda()).clamp(0.0, 255.0)
 
-			flow_predictions, warped_images = model(image1, image2, iters=args.iters)
+			flow_predictions, warped_images = model(image1, image2, flow_gt, frame1=frame1, frame2=frame2, \
+				iters=args.iters)
 
 			loss, metrics = sequence_loss(flow_predictions, \
-				warped_images,  image1, flow_gt, valid, args.gamma)
+				warped_images,  image1, flow_gt, valid, total_steps=total_steps, gamma=args.gamma)
+
 			scaler.scale(loss).backward()
 			scaler.unscale_(optimizer)                
 			torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
@@ -192,19 +207,20 @@ def train(args):
 			logger.push(metrics)
 
 			if total_steps % VAL_FREQ == VAL_FREQ - 1:
-				PATH = 'checkpoints/%d_%s.pth' % (total_steps+1, args.name)
+				PATH = 'checkpoints/first_1000_sup/%d_%s.pth' % (total_steps+1, args.name)
 				torch.save(model.state_dict(), PATH)
 
-				results = {}
-				for val_dataset in args.validation:
-					if val_dataset == 'chairs':
-						results.update(evaluate.validate_chairs(model.module))
-					elif val_dataset == 'sintel':
-						results.update(evaluate.validate_sintel(model.module))
-					elif val_dataset == 'kitti':
-						results.update(evaluate.validate_kitti(model.module))
+				if total_steps % 1000 == 999:
+					results = {	}
+					for val_dataset in args.validation:
+						if val_dataset == 'chairs':
+							results.update(evaluate.validate_chairs(model.module))
+						elif val_dataset == 'sintel':
+							results.update(evaluate.validate_sintel(model.module))
+						elif val_dataset == 'kitti':
+							results.update(evaluate.validate_kitti(model.module))
 
-				logger.write_dict(results)
+					logger.write_dict(results)
 				
 				model.train()
 				if args.stage != 'chairs':

@@ -24,8 +24,8 @@ def photometric_loss(wraped, frame1):
 	p_loss = torch.sum(p_loss, dim=1)/3
 	return torch.sum(p_loss)/frame1.size(0)
 
-def unsup_loss(pred_flows, warped_images, frame1):
-	bce =  photometric_loss(warped_images, frame1)
+def unsup_loss(pred_flows, warped_images, frame1):	
+	bce =  photometric_loss(warped_images, frame1)	
 	smooth = smoothness_loss(pred_flows)
 	loss = bce + smooth
 	return loss
