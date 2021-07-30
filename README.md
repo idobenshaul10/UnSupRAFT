@@ -12,4 +12,4 @@ The code also contains parts based on: [ARFlow](https://github.com/lliuz/ARFlow)
 
 To run, the same command as in the RAFT reference are used. UMAP visualization of features are given in `viz_features.py`. 
 
-![UMAP of features from first 100 iteration frames on the Sintel Train set](https://github.com/idobenshaul10/UnSupRAFT/tree/main/umap_pics/RAFT_first_100.png)
+![UMAP of features from first 100 iteration frames on the Sintel Train set](umap_pics/RAFT_first_100.png)
