@@ -114,7 +114,7 @@ class RAFT(nn.Module):
 	def forward(self, image1, image2, flow_gt, frame1, frame2, \
 		iters=12, flow_init=None, upsample=True, test_mode=False):
 		""" Estimate optical flow between pair of frames """
-
+		
 		image2_orig = image2
 
 		image1 = 2 * (image1 / 255.0) - 1.0
@@ -128,7 +128,7 @@ class RAFT(nn.Module):
 
 		# run the feature network
 		with autocast(enabled=self.args.mixed_precision):
-			fmap1, fmap2 = self.fnet([image1, image2])        
+			fmap1, fmap2 = self.fnet([image1, image2])
 		
 		fmap1 = fmap1.float()
 		fmap2 = fmap2.float()
@@ -149,7 +149,7 @@ class RAFT(nn.Module):
 		if flow_init is not None:
 			coords1 = coords1 + flow_init
 
-		flow_predictions = []
+		flow_predictions = []		
 		for itr in range(iters):
 			coords1 = coords1.detach()
 			corr = corr_fn(coords1) # index correlation volume
@@ -170,10 +170,7 @@ class RAFT(nn.Module):
 			flow_predictions.append(flow_up)
 
 		if test_mode:
-			return coords1 - coords0, flow_up		
+			return coords1 - coords0, flow_up
 		
-		warped_images = [flow_warp(image2_orig, flow) for flow in flow_predictions]
-
-		# warped_images = [self.stn(flow, frame2) for flow in flow_predictions]
-		# warped_images = [self.stn(flow_gt, frame2) for flow in flow_predictions]
+		warped_images = [flow_warp(image2_orig, flow) for flow in flow_predictions]		
 		return flow_predictions, warped_images

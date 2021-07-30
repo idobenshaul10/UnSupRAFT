@@ -18,21 +18,32 @@ from raft import RAFT
 from utils.utils import InputPadder, forward_interpolate
 from tqdm import tqdm
 from scipy.special import softmax
-
 import cv2
+import pickle
 
 
-def viz(img, flo):
+def viz(img, flows, val_id):
 	img = img[0].permute(1,2,0).cpu().numpy()
-	flo = flo[0].permute(1,2,0).cpu().numpy()
+	new_flows = []
 	
-	# map flow to rgb image
+	for flo in flows:				
+		try:
+			flo = flo[0].permute(1,2,0).cpu().numpy()
+		except:
+			flo = flo.permute(1,2,0).cpu().numpy()		
+		flo = flow_viz.flow_to_image(flo)
+		new_flows.append(flo)
+	
+	img_flo = np.concatenate([img, *new_flows], axis=0)	
 
-	flo = flow_viz.flow_to_image(flo)    
-	img_flo = np.concatenate([img, flo], axis=0)    
+	img = img_flo[:, :, [2,1,0]]#/255.0	
+	# cv2.imwrite(f'outputs/{val_id}.png', img)
 
-	cv2.imshow('image', img_flo[:, :, [2,1,0]]/255.0)
+	img /= 255.0
+	cv2.imshow('image', img)
 	cv2.waitKey()
+	cv2.destroyAllWindows()
+
 
 @torch.no_grad()
 def create_sintel_submission(model, iters=32, warm_start=False, output_path='sintel_submission'):
@@ -42,7 +53,7 @@ def create_sintel_submission(model, iters=32, warm_start=False, output_path='sin
 		test_dataset = datasets.MpiSintel(split='test', aug_params=None, dstype=dstype)
 		
 		flow_prev, sequence_prev = None, None
-		for test_id in range(len(test_dataset)):
+		for test_id in tqdm(range(len(test_dataset))):
 			image1, image2, (sequence, frame) = test_dataset[test_id]
 			if sequence != sequence_prev:
 				flow_prev = None
@@ -50,7 +61,9 @@ def create_sintel_submission(model, iters=32, warm_start=False, output_path='sin
 			padder = InputPadder(image1.shape)
 			image1, image2 = padder.pad(image1[None].cuda(), image2[None].cuda())
 
-			flow_low, flow_pr = model(image1, image2, iters=iters, flow_init=flow_prev, test_mode=True)
+			flow_low, flow_pr = model(image1, image2, \
+				frame1=None, frame2=None, flow_gt=None, \
+				iters=iters, flow_init=flow_prev, test_mode=True)
 			flow = padder.unpad(flow_pr[0]).permute(1, 2, 0).cpu().numpy()
 
 			if warm_start:
@@ -94,6 +107,7 @@ def validate_chairs(model, iters=24):
 	epe_list = []
 
 	val_dataset = datasets.FlyingChairs(split='validation')
+	# val_dataset = datasets.FlyingChairs(split='validation')
 	for val_id in tqdm(range(len(val_dataset))):        
 		image1, image2, flow_gt, _, frame1, frame2 = val_dataset[val_id]        
 
@@ -103,7 +117,8 @@ def validate_chairs(model, iters=24):
 		_, flow_pr = model(image1, image2, flow_gt, \
 			frame1=frame1, frame2=frame2, \
 			iters=iters, test_mode=True)        
-		viz(image1, flow_pr)
+		
+		# viz(image1, [flow_pr, flow_gt], val_id)
 
 		epe = torch.sum((flow_pr[0].cpu() - flow_gt)**2, dim=0).sqrt()
 		epe_list.append(epe.view(-1).numpy())
@@ -118,23 +133,38 @@ def validate_sintel(model, iters=32):
 	""" Peform validation using the Sintel (train) split """
 	model.eval()
 	results = {}
-	for dstype in ['clean', 'final']:
-		val_dataset = datasets.MpiSintel(split='training', dstype=dstype)
+	# for dstype in ['clean', 'final']:
+	feature_maps = []
+	for dstype in ['clean']:
+		val_dataset = datasets.MpiSintel(split='training', dstype=dstype)		
+		# val_dataset = datasets.MpiSintel(split='test', dstype=dstype)
 		epe_list = []
 
-		for val_id in range(len(val_dataset)):
-			image1, image2, flow_gt, _ = val_dataset[val_id]
+		for val_id in tqdm(range(len(val_dataset))):		
+			frame1, frame2 = None, None
+			
+			image1, image2, flow_gt, _, frame1, frame2 = val_dataset[val_id]
 			image1 = image1[None].cuda()
 			image2 = image2[None].cuda()
 
 			padder = InputPadder(image1.shape)
-			image1, image2 = padder.pad(image1, image2)
+			image1, image2 = padder.pad(image1, image2)			
 
-			flow_low, flow_pr = model(image1, image2, iters=iters, test_mode=True)
+			_, flow_pr, fmap1 = model(image1, image2, flow_gt, \
+				frame1=frame1, frame2=frame2, \
+				iters=iters, test_mode=True)			
+
+			feature_maps.append(fmap1.cpu().numpy())
+
 			flow = padder.unpad(flow_pr[0]).cpu()
 
 			epe = torch.sum((flow - flow_gt)**2, dim=0).sqrt()
-			epe_list.append(epe.view(-1).numpy())
+			epe_list.append(epe.view(-1).numpy())		
+			if val_id > 900:
+				break
+
+		pickle.dump(feature_maps, open( "umap_pickles/save_900.p", "wb" ))
+		exit()
 
 		epe_all = np.concatenate(epe_list)
 		epe = np.mean(epe_all)
@@ -156,15 +186,20 @@ def validate_kitti(model, iters=24):
 
 	out_list, epe_list = [], []
 	for val_id in range(len(val_dataset)):
-		image1, image2, flow_gt, valid_gt = val_dataset[val_id]
+		# image1, image2, flow_gt, valid_gt = val_dataset[val_id]
+		image1, image2, flow_gt, valid_gt, frame1, frame2 = val_dataset[val_id]
 		image1 = image1[None].cuda()
 		image2 = image2[None].cuda()
 
 		padder = InputPadder(image1.shape, mode='kitti')
 		image1, image2 = padder.pad(image1, image2)
 
-		flow_low, flow_pr = model(image1, image2, iters=iters, test_mode=True)
-		flow = padder.unpad(flow_pr[0]).cpu()
+		flow_low, flow_pr = model(image1, image2, flow_gt, \
+				frame1=frame1, frame2=frame2, \
+				iters=iters, test_mode=True) 
+
+		flow = padder.unpad(flow_pr[0]).cpu()		
+		# viz(image1[:, :, :-1, :-6], [flow], val_id)
 
 		epe = torch.sum((flow - flow_gt)**2, dim=0).sqrt()
 		mag = torch.sum(flow_gt**2, dim=0).sqrt()
@@ -202,17 +237,17 @@ if __name__ == '__main__':
 	model.cuda()
 	model.eval()
 
-	# create_sintel_submission(model.module, warm_start=True)
-	# create_kitti_submission(model.module)
+	create_sintel_submission(model.module, warm_start=True)
+	# create_kitti_submission(model.module)	
 
-	with torch.no_grad():
-		if args.dataset == 'chairs':
-			validate_chairs(model.module)
+	# with torch.no_grad():
+	# 	if args.dataset == 'chairs':
+	# 		validate_chairs(model.module)
 
-		elif args.dataset == 'sintel':
-			validate_sintel(model.module)
+	# 	elif args.dataset == 'sintel':
+	# 		validate_sintel(model.module)
 
-		elif args.dataset == 'kitti':
-			validate_kitti(model.module)
+	# 	elif args.dataset == 'kitti':
+	# 		validate_kitti(model.module)
 
 

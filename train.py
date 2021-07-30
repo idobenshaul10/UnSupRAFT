@@ -1,6 +1,6 @@
 from __future__ import print_function, division
 import sys
-sys.path.append('/home/ido/projects/RAFT/core')
+# sys.path.append('<core_path>')
 
 '''
 
@@ -60,8 +60,7 @@ def sequence_loss(flow_preds, warped_images, img1, \
 	flow_loss = 0.0
 
 	# exlude invalid pixels and extremely large diplacements
-	mag = torch.sum(flow_gt**2, dim=1).sqrt()
-	# valid = (valid >= 0.5) & (mag < max_flow)
+	mag = torch.sum(flow_gt**2, dim=1).sqrt()	
 
 	for i in range(n_predictions):
 		i_weight = gamma**(n_predictions - i - 1)
@@ -69,18 +68,12 @@ def sequence_loss(flow_preds, warped_images, img1, \
 		if total_steps < 0:
 			i_loss = (flow_preds[i] - flow_gt).abs()
 		else:
-			i_loss = unsup_loss(flow_preds[i], warped_images[i], img1)
-			# i_loss = unsup_loss(flow_gt, warped_images[i], img1)
-
-		# i_loss = unsup_loss(flow_preds[i], warped_images[i], img1)
+			i_loss = unsup_loss(flow_preds[i], warped_images[i], img1)				
 		
-		try:
-			flow_loss += i_weight * (i_loss).mean()
-		except:
-			import pdb; pdb.set_trace()
+		flow_loss += i_weight * (i_loss).mean()		
 
 	epe = torch.sum((flow_preds[-1] - flow_gt)**2, dim=1).sqrt()
-	epe = epe.view(-1)#[valid.view(-1)]
+	epe = epe.view(-1)
 
 	metrics = {
 		'epe': epe.mean().item(),
@@ -171,11 +164,11 @@ def train(args):
 	train_loader = datasets.fetch_dataloader(args)
 	optimizer, scheduler = fetch_optimizer(args, model)
 
-	total_steps = 0
+	total_steps = 95000
 	scaler = GradScaler(enabled=args.mixed_precision)
 	logger = Logger(model, scheduler)
 
-	VAL_FREQ = 500
+	VAL_FREQ = 5000
 	add_noise = True
 
 	should_keep_training = True
@@ -204,23 +197,22 @@ def train(args):
 			scheduler.step()
 			scaler.update()
 
-			logger.push(metrics)
-
+			logger.push(metrics)			
+			
 			if total_steps % VAL_FREQ == VAL_FREQ - 1:
-				PATH = 'checkpoints/first_1000_sup/%d_%s.pth' % (total_steps+1, args.name)
+				PATH = 'checkpoints/sintel/%d_%s.pth' % (total_steps+1, args.name)
 				torch.save(model.state_dict(), PATH)
+				
+				results = {	}
+				for val_dataset in args.validation:
+					if val_dataset == 'chairs':
+						results.update(evaluate.validate_chairs(model.module))
+					elif val_dataset == 'sintel':
+						results.update(evaluate.validate_sintel(model.module))
+					elif val_dataset == 'kitti':
+						results.update(evaluate.validate_kitti(model.module))
 
-				if total_steps % 1000 == 999:
-					results = {	}
-					for val_dataset in args.validation:
-						if val_dataset == 'chairs':
-							results.update(evaluate.validate_chairs(model.module))
-						elif val_dataset == 'sintel':
-							results.update(evaluate.validate_sintel(model.module))
-						elif val_dataset == 'kitti':
-							results.update(evaluate.validate_kitti(model.module))
-
-					logger.write_dict(results)
+				logger.write_dict(results)
 				
 				model.train()
 				if args.stage != 'chairs':
